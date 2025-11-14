@@ -2,11 +2,11 @@ pipeline {
   agent any
 
   parameters {
-    string(name: "App_Version", description: "provide application version")
+    string(name: "App_Version", description: "Provide application version")
   }
 
   environment {
-    DOCKERHUB_CREDENTIALS = credentials("dockerhub")
+    DOCKERHUB_CREDENTIALS = credentials("dockerhub")  // Jenkins credentials ID
   }
 
   stages {
@@ -23,9 +23,7 @@ pipeline {
 
     stage("Maven Build") {
       steps {
-        sh """
-          mvn clean package -DskipTests
-        """
+        sh "mvn clean package -DskipTests"
       }
     }
 
@@ -55,20 +53,20 @@ pipeline {
 
     stage("Docker Image Tag") {
       steps {
-        sh "docker tag datastore:${App_Version} 8072388539/datastore:${App_Version}"
+        sh "docker tag datastore:${App_Version} abhi9604/datastore:${App_Version}"
       }
     }
 
-    stage("Loggingin & Pushing Docker image") {
+    stage("Docker Login & Push") {
       steps {
         sh """
           docker login -u $DOCKERHUB_CREDENTIALS_USR -p $DOCKERHUB_CREDENTIALS_PSW
-          docker push 8072388539/datastore:${App_Version}
+          docker push abhi9604/datastore:${App_Version}
         """
       }
     }
 
-    stage("cleanup") {
+    stage("Cleanup") {
       steps {
         sh "docker image prune -a -f"
       }
@@ -76,7 +74,7 @@ pipeline {
 
     stage("Deployment Acceptance") {
       steps {
-        input "Trigger Down Stream Job"
+        input "Trigger Downstream Job"
       }
     }
   }
