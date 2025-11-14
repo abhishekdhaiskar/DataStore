@@ -1,0 +1,83 @@
+pipeline {
+  agent any
+
+  parameters {
+    string(name: "App_Version", description: "provide application version")
+  }
+
+  environment {
+    DOCKERHUB_CREDENTIALS = credentials("dockerhub")
+  }
+
+  stages {
+
+    stage("Repo Clone") {
+      steps {
+        checkout scmGit(
+          branches: [[name: '*/master']],
+          extensions: [],
+          userRemoteConfigs: [[url: 'https://github.com/abhishekdhaiskar/DataStore.git']]
+        )
+      }
+    }
+
+    stage("Maven Build") {
+      steps {
+        sh """
+          mvn clean package -DskipTests
+        """
+      }
+    }
+
+    stage("Maven Test") {
+      steps {
+        sh "mvn test"
+      }
+    }
+
+    stage("Artifact Store") {
+      steps {
+        sh "aws s3 cp ./target/*.jar s3://datastore-application/"
+      }
+    }
+
+    stage("Docker Image Build") {
+      steps {
+        sh "docker build -t datastore:${App_Version} ."
+      }
+    }
+
+    stage("Docker Image Scan") {
+      steps {
+        sh "trivy image datastore:${App_Version}"
+      }
+    }
+
+    stage("Docker Image Tag") {
+      steps {
+        sh "docker tag datastore:${App_Version} 8072388539/datastore:${App_Version}"
+      }
+    }
+
+    stage("Loggingin & Pushing Docker image") {
+      steps {
+        sh """
+          docker login -u $DOCKERHUB_CREDENTIALS_USR -p $DOCKERHUB_CREDENTIALS_PSW
+          docker push 8072388539/datastore:${App_Version}
+        """
+      }
+    }
+
+    stage("cleanup") {
+      steps {
+        sh "docker image prune -a -f"
+      }
+    }
+
+    stage("Deployment Acceptance") {
+      steps {
+        input "Trigger Down Stream Job"
+      }
+    }
+  }
+}
