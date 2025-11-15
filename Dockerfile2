@@ -1,20 +1,16 @@
-FROM ubuntu
-MAINTAINER shiva
+FROM amazoncorretto:11-alpine-jdk
 
-RUN apt-get update -y
-RUN apt-get install -y openjdk-11-jdk curl git
-
-# Install Maven manually
-RUN apt-get install -y maven
-
-RUN mkdir -p /app/source
-COPY ./ /app/source
 WORKDIR /app/source
 
-RUN chmod +x mvnw
-RUN ./mvnw package -DskipTests
+COPY . .
 
-# Copy JAR from inside container
+# Fix mvnw permission
+RUN chmod +x mvnw
+
+# Build application
+RUN ./mvnw package
+
+# Copy jar
 RUN cp target/*.jar app.jar
 
 ENTRYPOINT ["java", "-jar", "app.jar"]
