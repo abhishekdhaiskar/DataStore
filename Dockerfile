@@ -1,14 +1,16 @@
-# stage-1
-FROM amazoncorretto:11-alpine-jdk as builder
-RUN mkdir -p /app/source
-COPY . /app/source
-WORKDIR /app/source
-RUN ./mvnw package
-# ENTRYPOINT ["java", "-jar", "./target/datastore-0.0.4.jar"]
+# ======= BUILD STAGE =======
+FROM maven:3.9.6-eclipse-temurin-17 AS builder
 
-#stage-2
-FROM amazoncorretto:11-alpine-jdk
-COPY --from=builder /app/source/target/*.jar /app/app.jar
-EXPOSE 8081
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+WORKDIR /app
+COPY . .
 
+RUN chmod +x mvnw
+RUN ./mvnw clean package -DskipTests
+
+# ======= RUNTIME STAGE =======
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+COPY --from=builder /app/target/*.jar app.jar
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
