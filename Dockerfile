@@ -3,10 +3,10 @@ FROM maven:3.9.6-eclipse-temurin-17 AS builder
 
 WORKDIR /app
 
-# Copy everything from repo root (must include pom.xml and mvnw)
+# Copy everything from repo root (includes pom.xml and mvnw)
 COPY . .
 
-# Make mvnw executable
+# Make Maven wrapper executable
 RUN chmod +x mvnw
 
 # Build project, skip tests
@@ -17,7 +17,7 @@ FROM eclipse-temurin:17-jre
 
 WORKDIR /app
 
-# Copy built jar from builder
+# Copy built jar from builder stage
 COPY --from=builder /app/target/*.jar app.jar
 
 EXPOSE 8080
