@@ -1,16 +1,106 @@
-git remote add origin https://github.com/cameronmcnz/example-website.git
-git push -u -f origin master
+-----------Ubuntu 24.04 LTS serve---------------------- for jenkins-CI---------------
 
-./mvnw validate -> Checks project structure is correct and all dependencies downloaded.
-./mvnw compile -> Compiles source code and converts .java files to .class files.
-./mvnw test -> Executes test cases.
-./mvnw package -> Creates jar file.
+Java JDK 11
+Maven
+Docker
+AWS CLI
+Trivy
+SonarScanner
+Jenkins
+ ------------------------------------------------------install.sh----------------------------------------
+                        nano setup-dev-env.sh.sh
+                       chmod +x setup-dev-env.sh
+                       ./setup-dev-env.sh
 
-./mvnw dependency:tree -> It displays dependencies in tree format.
-./mvnw clean -> Removes target directory.
+#!/bin/bash
+set -e
 
-docker build -t datastore:1.0 .
-docker tag datastore:1.0 8072388539/datastore:v1.0
-docker push 8072388539/datastore:v1.0
+echo "------------------------------------------"
+echo "Updating system packages..."
+echo "------------------------------------------"
+sudo apt update -y
+sudo apt upgrade -y
+sudo apt install -y curl wget unzip git apt-transport-https ca-certificates software-properties-common gnupg lsb-release
 
-sed -i "" "s/nginx:1.1/busybox:1.2/" test
+echo "------------------------------------------"
+echo "Installing Java JDK 11..."
+echo "------------------------------------------"
+sudo apt install -y openjdk-11-jdk
+java -version
+
+echo "------------------------------------------"
+echo "Installing Maven..."
+echo "------------------------------------------"
+sudo apt install -y maven
+mvn -version
+
+echo "------------------------------------------"
+echo "Installing Docker..."
+echo "------------------------------------------"
+# Remove old versions
+sudo apt remove docker docker-engine docker.io containerd runc -y
+
+# Install dependencies
+sudo apt install -y ca-certificates curl gnupg lsb-release
+
+# Add Docker repository
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Add current user to docker group
+sudo usermod -aG docker $USER
+echo "Docker installed. Please log out and log back in to apply Docker group permissions."
+docker --version
+
+echo "------------------------------------------"
+echo "Installing AWS CLI..."
+echo "------------------------------------------"
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
+
+echo "------------------------------------------"
+echo "Installing Trivy..."
+echo "------------------------------------------"
+wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/trivy.list
+sudo apt update
+sudo apt install -y trivy
+trivy --version
+
+echo "------------------------------------------"
+echo "Installing SonarScanner..."
+echo "------------------------------------------"
+wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.10.0.5346-linux.zip
+unzip sonar-scanner-cli-4.10.0.5346-linux.zip
+sudo mv sonar-scanner-4.10.0.5346-linux /opt/sonar-scanner
+echo 'export PATH=$PATH:/opt/sonar-scanner/bin' >> ~/.bashrc
+source ~/.bashrc
+sonar-scanner --version
+
+echo "------------------------------------------"
+echo "Installing Jenkins..."
+echo "------------------------------------------"
+wget -q -O - https://pkg.jenkins.io/debian/jenkins.io.key | sudo apt-key add -
+sudo sh -c 'echo deb https://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
+sudo apt update
+sudo apt install -y jenkins
+sudo systemctl enable jenkins
+sudo systemctl start jenkins
+sudo systemctl status jenkins
+
+echo "------------------------------------------"
+echo "All installations completed successfully!"
+echo "Please log out and log back in to apply Docker permissions."
+echo "Access Jenkins at: http://<your-server-ip>:8080"
+echo "------------------------------------------"
+
+
