@@ -1,29 +1,34 @@
-# ======= BUILD STAGE =======
-FROM maven:3.9.6-eclipse-temurin-17 AS builder
+# =========================
+#   STAGE 1 — BUILD
+# =========================
+FROM amazoncorretto:11-alpine-jdk AS builder
 
 # Set working directory
 WORKDIR /app
 
-# Copy all project files (must include pom.xml and mvnw)
+# Copy everything (including mvnw)
 COPY . .
 
-# Make Maven wrapper executable
+# Make mvnw executable
 RUN chmod +x mvnw
 
-# Build the project and skip tests
+# Build the application (skip tests to speed up Jenkins)
 RUN ./mvnw clean package -DskipTests
 
-# ======= RUNTIME STAGE =======
-FROM eclipse-temurin:17-jre
+
+# =========================
+#   STAGE 2 — RUNTIME
+# =========================
+FROM amazoncorretto:11-alpine-jdk
 
 # Set working directory
 WORKDIR /app
 
-# Copy the built jar from the builder stage
+# Copy jar from builder stage
 COPY --from=builder /app/target/*.jar app.jar
 
-# Expose application port
-EXPOSE 8080
+# Expose app port
+EXPOSE 8081
 
-# Run the application
+# Run application
 ENTRYPOINT ["java", "-jar", "app.jar"]
