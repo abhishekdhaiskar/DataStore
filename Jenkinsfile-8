@@ -41,27 +41,27 @@ pipeline {
         }
 
         stage("Artifact Store") {
-  steps {
-    withAWS(credentials: 'aws-creds', region: 'ap-south-1') {
-      sh """
-        set -x
+            steps {
+                withAWS(credentials: 'aws-creds', region: 'ap-south-1') {
+                    sh """
+                        set -x
 
-        echo "===== UPLOADING TO S3 ====="
+                        echo "===== UPLOADING TO S3 ====="
 
-        echo "Checking target folder..."
-        ls -lh target || true
+                        echo "Checking target folder..."
+                        ls -lh target || true
 
-        echo "Checking bucket access..."
-        aws s3 ls s3://datastore-application/ || true
+                        echo "Checking bucket access..."
+                        aws s3 ls s3://datastore-application/ || true
 
-        echo "Uploading jar..."
-        aws s3 cp target/*.jar s3://datastore-application/ --region ap-south-1
+                        echo "Uploading jar..."
+                        aws s3 cp target/*.jar s3://datastore-application/ --region ap-south-1
 
-        echo "===== S3 UPLOAD DONE ====="
-      """
-    }
-  }
-}
+                        echo "===== S3 UPLOAD DONE ====="
+                    """
+                }
+            }
+        }
 
         stage("Docker Image Build") {
             steps {
@@ -104,11 +104,13 @@ pipeline {
 
         stage("Trigger Deployment") {
             steps {
-                build job: "KubernetesDeployment",
-                parameters: [
-                    string(name: "App_Name", value: "datastore-deploy"),
-                    string(name: "App_Version", value: params.App_Version)
-                ]
+                build(
+                    job: "KubernetesDeployment",
+                    parameters: [
+                        string(name: "App_Name", value: "datastore-deploy"),
+                        string(name: "App_Version", value: params.App_Version)
+                    ]
+                )
             }
         }
     }
