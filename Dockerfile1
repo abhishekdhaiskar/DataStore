@@ -1,5 +1,5 @@
 FROM amazoncorretto:11-alpine-jdk
-MAINTAINER shiva
+MAINTAINER Abhii
 RUN mkdir -p /app/source
 WORKDIR /app/source
 COPY . .
