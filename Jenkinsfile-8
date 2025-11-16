@@ -1,123 +1,114 @@
 pipeline {
-  agent any
+    agent any
 
-  parameters {
-    string(name: "App_Version", description: "Provide application version")
-  }
-
-  environment {
-    DOCKERHUB_CREDENTIALS = credentials("dockerhub")
-  }
-
-  options {
-    timestamps()              // show time for each log line
-    ansiColor('xterm')        // colored logs
-  }
-
-  stages {
-
-    stage("Repo Clone") {
-      steps {
-        echo "===== CLONING REPO ====="
-        checkout scmGit(
-          branches: [[name: '*/master']],
-          userRemoteConfigs: [[url: 'https://github.com/abhishekdhaiskar/DataStore.git']]
-        )
-      }
+    parameters {
+        string(name: "App_Version", description: "Provide application version")
     }
 
-    stage("Maven Build") {
-      steps {
-        echo "===== MAVEN BUILD ====="
-        sh "mvn clean package -DskipTests -e -X"
-      }
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials("dockerhub")
     }
 
-    stage("Maven Test") {
-      steps {
-        echo "===== MAVEN TEST ====="
-        sh "mvn test -e -X"
-      }
+    options {
+        timestamps()
+        ansiColor('xterm')
     }
 
-    stage("Artifact Store") {
-      steps {
-        echo "===== UPLOADING ARTIFACT TO S3 ====="
-        withCredentials([[
-          $class: 'AmazonWebServicesCredentialsBinding',
-          credentialsId: 'aws-creds'
-        ]]) {
-          sh '''
-            set -x   # <<< SHOW ALL COMMANDS
+    stages {
 
-            echo "Listing target directory:"
-            ls -lh target/
-
-            echo "Checking S3 bucket access..."
-            aws s3 ls s3://datastore-application/ --region ap-south-1
-
-            echo "Uploading JAR..."
-            aws s3 cp target/*.jar s3://datastore-application/ --region ap-south-1 --debug
-
-            set +x
-          '''
+        stage("Repo Clone") {
+            steps {
+                echo "===== CLONING REPO ====="
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/master"]],
+                    userRemoteConfigs: [[url: "https://github.com/abhishekdhaiskar/DataStore.git"]]
+                ])
+            }
         }
-      }
-    }
 
-    stage("Docker Image Build") {
-      steps {
-        echo "===== DOCKER BUILD ====="
-        sh "docker build -t datastore:${App_Version} ."
-      }
-    }
+        stage("Maven Build") {
+            steps {
+                echo "===== MAVEN BUILD ====="
+                sh "mvn clean package -DskipTests"
+            }
+        }
 
-    stage("Docker Image Scan") {
-      steps {
-        echo '===== DOCKER SCAN ====='
-        sh "trivy image datastore:${App_Version}"
-      }
-    }
+        stage("Maven Test") {
+            steps {
+                echo "===== MAVEN TEST ====="
+                sh "mvn test"
+            }
+        }
 
-    stage("Docker Image Tag") {
-      steps {
-        echo "===== DOCKER TAG ====="
-        sh "docker tag datastore:${App_Version} abhi9604/datastore:${App_Version}"
-      }
-    }
+        stage("Artifact Store") {
+            steps {
+                echo "===== UPLOADING TO S3 ====="
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-creds'
+                ]]) {
+                    sh '''
+                        echo "Listing JARs:"
+                        ls -lh target/
 
-    stage("DockerHub Login & Push") {
-      steps {
-        echo "===== DOCKER HUB PUSH ====="
-        sh '''
-          echo "$DOCKERHUB_CREDENTIALS_PSW" | docker login -u "$DOCKERHUB_CREDENTIALS_USR" --password-stdin
-          docker push abhi9604/datastore:'"${App_Version}"'
-        '''
-      }
-    }
+                        echo "Checking S3 bucket:"
+                        aws s3 ls s3://datastore-application/ --region ap-south-1
 
-    stage("Cleanup") {
-      steps {
-        echo "===== CLEANUP ====="
-        sh "docker image prune -a -f"
-      }
-    }
+                        echo "Uploading artifact:"
+                        aws s3 cp target/*.jar s3://datastore-application/ --region ap-south-1
+                    '''
+                }
+            }
+        }
 
-    stage("Approval") {
-      steps {
-        input "Trigger downstream job?"
-      }
-    }
+        stage("Docker Image Build") {
+            steps {
+                sh "docker build -t datastore:${App_Version} ."
+            }
+        }
 
-    stage("Trigger Deployment") {
-      steps {
-        build job: "KubernetesDeployment",
-          parameters: [
-            string(name: "App_Name", value: "datastore-deploy"),
-            string(name: "App_Version", value: params.App_Version)
-          ]
-      }
-    }
+        stage("Docker Image Scan") {
+            steps {
+                sh "trivy image datastore:${App_Version}"
+            }
+        }
 
-  }
+        stage("Docker Image Tag") {
+            steps {
+                sh "docker tag datastore:${App_Version} abhi9604/datastore:${App_Version}"
+            }
+        }
+
+        stage("DockerHub Push") {
+            steps {
+                sh '''
+                    echo "$DOCKERHUB_CREDENTIALS_PSW" | docker login -u "$DOCKERHUB_CREDENTIALS_USR" --password-stdin
+                    docker push abhi9604/datastore:'"${App_Version}"'
+                '''
+            }
+        }
+
+        stage("Cleanup") {
+            steps {
+                sh "docker image prune -a -f"
+            }
+        }
+
+        stage("Approval") {
+            steps {
+                input "Trigger downstream job?"
+            }
+        }
+
+        stage("Trigger Deployment") {
+            steps {
+                build job: "KubernetesDeployment",
+                parameters: [
+                    string(name: "App_Name", value: "datastore-deploy"),
+                    string(name: "App_Version", value: params.App_Version)
+                ]
+            }
+        }
+    }
 }
