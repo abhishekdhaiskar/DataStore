@@ -1,27 +1,26 @@
 pipeline {
   agent any
 
-  environment {
-    DOCKERHUB_CREDENTIALS=credentials("dockerhub")
-    SONARQUBE_CREDENTIALS=credentials("sonarqube")
-  }
-
   parameters {
     string(name: "App_Version", description: "provide application version")
   }
 
+  environment {
+    DOCKERHUB_CREDENTIALS=credentials("dockerhub")
+  }
+
   stages {
-    stage("Clone Repository") {
+    stage("Repo Clone") {
       steps {
-        checkout scmGit(branches: [[name: '*/master']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/shivagande26/DataStore.git']])
+        checkout scmGit(branches: [[name: '*/master']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/abhishekdhaiskar/DataStore.git']])
       }
     }
     stage("Maven Build") {
       steps {
         sh """
-          echo "-------- Building datastore project --------"
-          mvn clean package
-          echo "-------- Datastore project build successfully --------"
+            echo "-------- Building Application --------"
+            mvn clean package
+            echo "------- Application Built Successfully --------"
         """
       }
     }
@@ -34,18 +33,16 @@ pipeline {
         """
       }
     }
-    stage("Static Code Analisys") {
-      steps{
-        script {
-         def scannerHome = tool 'sonarqube'
-         withSonarQubeEnv('sonarqube') {
-          // sh "${scannerHome}/bin/sonar-scanner"
-           sh "${scannerHome}/bin/sonar-scanner "+"-Dsonar.projectKey=datastore "+"-Dsonar.projectName=DataStore "+"-Dsonar.projectVersion='${App_Version}' "+"-Dsonar.sources=src/main/java "+"-Dsonar.java.binaries=target/classes "+"-Dsonar.language=java"
-         }
-        }
+    stage("Artifact Store") {
+      steps {
+        sh """
+          echo "-------- Pushing Artifacts To S3 --------"
+          aws s3 cp ./target/*.jar s3://datastore-application/
+          echo "-------- Pushing Artifacts To S3 Completed --------"
+        """
       }
     }
-    stage("Building Docker Image") {
+    stage("Docker Image Build") {
       steps {
         sh """
           echo "-------- Building Docker Image --------"
@@ -54,7 +51,7 @@ pipeline {
         """
       }
     }
-    stage("Scanning Docker Image") {
+    stage("Docker Image Scan") {
       steps {
         sh """
           echo "-------- Scanning Docker Image --------"
@@ -63,53 +60,45 @@ pipeline {
         """
       }
     }
-    stage("Docker Login") {
+    stage("Docker Image Tag") {
+      steps{
+        sh """
+          echo "-------- Tagging Docker Image --------"
+          docker tag datastore:"${App_Version}" abhi9604/datastore:"${App_Version}"
+          echo "-------- Tagging Docker Image Completed."
+        """
+      }
+    }
+    stage("Loggingin & Pushing Docker image") {
       steps {
         sh """
           echo "-------- Logging To DockerHub --------"
           docker login -u $DOCKERHUB_CREDENTIALS_USR --password $DOCKERHUB_CREDENTIALS_PSW
           echo "-------- DockerHub Login Successful --------"
-        """
-      }
-    }
-    stage("Pushing Docker Image") {
-      steps {
-        sh """
-          echo "-------- Tagging Docker Image --------"
-          docker tag datastore:"${App_Version}" 8072388539/datastore:"${App_Version}"
-          echo "-------- Tagging of Docker Image Complete --------"
 
           echo "-------- Pushing Docker Image To DockerHub --------"
-          docker push 8072388539/datastore:"${App_Version}"
-          echo "-------- Pushing Docker Image Complete --------"
+          docker push abhi9604/datastore:"${App_Version}"
+          echo "-------- Docker Image Pushed Successfully --------"
         """
       }
     }
-    stage("Clean Up Activities") {
+    stage("cleanup") {
       steps {
         sh """
-          echo "-------- Removing Unused Images --------"
-          docker image prune -a -f
-          echo "-------- Unused Images Removed Successfully --------"
+           echo "-------- Cleaning Up Jenkins Machine --------"
+           docker image prune -a -f
+           echo "-------- Clean Up Successful --------"
         """
       }
     }
-    stage("Continue Deployment Acceptance") {
+    stage("Deployment Acceptance") {
       steps {
-        input "Continue Deployment?"
+        input 'Trigger Down Stream Job'
       }
     }
     stage("Triggering Deployment Job") {
       steps {
-        build job: "app-deploy", parameters: [string(name: "App_Name", value: "datastore-deploy"), string(name: "App_Version", value: "${params.App_Version}")]
+        build job: "KubernetesDeployment", parameters: [string(name: "App_Name", value: "datastore-deploy"), string(name: "App_Version", value: "${params.App_Version}")]
       }
     }
   }
-  post {
-    always {
-      sh """
-        echo "Hello Action"
-      """
-    }
-  }
-}
