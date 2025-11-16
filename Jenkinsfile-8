@@ -22,44 +22,62 @@ pipeline {
 
     stage("Maven Build") {
       steps {
-        sh """
+        sh '''
+          set -x
           echo "-------- Building Application --------"
           mvn clean package -DskipTests
           echo "------- Application Built Successfully --------"
-        """
+        '''
       }
     }
 
     stage("Maven Test") {
       steps {
-        sh """
+        sh '''
+          set -x
           echo "-------- Executing Testcases --------"
           mvn test
           echo "-------- Testcases Execution Complete --------"
-        """
+        '''
       }
     }
 
-    /* ---------------------------------------------------
-         FIXED S3 STAGE (Mumbai region + full debug logs)
-       --------------------------------------------------- */
+    /* ------------------------------
+       FULL LOG VISIBLE S3 STAGE
+    --------------------------------*/
     stage("Artifact Store") {
       steps {
-        withCredentials([[ 
-          $class: 'AmazonWebServicesCredentialsBinding', 
-          credentialsId: 'aws-creds' 
-        ]]) {
-          sh '''
-            echo "Uploading artifact to S3..."
 
-            # show file
+        // Show everything, remove Jenkins masking
+        script {
+          System.setProperty("org.jenkinsci.plugins.credentialsbinding.maskPassword", "false")
+        }
+
+        withCredentials([[
+          $class: 'AmazonWebServicesCredentialsBinding',
+          credentialsId: 'aws-creds'
+        ]]) {
+
+          sh '''
+            set -x   # Show every command
+
+            echo "-------- S3 Upload Starting --------"
+
+            echo "Files inside target/:"
             ls -lh target/
 
-            # upload to Mumbai region
-            aws s3 cp target/*.jar s3://datastore-application/ --region ap-south-1 \
+            echo "AWS CLI Version:"
+            aws --version
+
+            echo "Checking bucket access..."
+            aws s3 ls s3://datastore-application/ --region ap-south-1
+
+            echo "Uploading JAR to S3 with FULL DEBUG LOGS:"
+            aws s3 cp target/*.jar s3://datastore-application/ \
+              --region ap-south-1 \
               --debug 2>&1 | tee s3-upload.log
 
-            echo "S3 Upload Completed"
+            echo "-------- S3 Upload Completed --------"
           '''
         }
       }
@@ -67,55 +85,47 @@ pipeline {
 
     stage("Docker Image Build") {
       steps {
-        sh """
-          echo "-------- Building Docker Image --------"
+        sh '''
+          set -x
           docker build -t datastore:${App_Version} .
-          echo "-------- Image Successfully Built --------"
-        """
+        '''
       }
     }
 
     stage("Docker Image Scan") {
       steps {
-        sh """
-          echo "-------- Scanning Docker Image --------"
+        sh '''
+          set -x
           trivy image datastore:${App_Version}
-          echo "-------- Scanning Docker Image Complete --------"
-        """
+        '''
       }
     }
 
     stage("Docker Image Tag") {
       steps {
-        sh """
-          echo "-------- Tagging Docker Image --------"
+        sh '''
+          set -x
           docker tag datastore:${App_Version} abhi9604/datastore:${App_Version}
-          echo "-------- Tagging Docker Image Completed --------"
-        """
+        '''
       }
     }
 
     stage("Login & Push to DockerHub") {
       steps {
-        sh """
-          echo "-------- Logging To DockerHub --------"
+        sh '''
+          set -x
           echo "$DOCKERHUB_CREDENTIALS_PSW" | docker login -u "$DOCKERHUB_CREDENTIALS_USR" --password-stdin
-          echo "-------- DockerHub Login Successful --------"
-
-          echo "-------- Pushing Docker Image To DockerHub --------"
           docker push abhi9604/datastore:${App_Version}
-          echo "-------- Docker Image Pushed Successfully --------"
-        """
+        '''
       }
     }
 
     stage("Cleanup") {
       steps {
-        sh """
-          echo "-------- Cleaning Jenkins Machine --------"
-          docker image prune -a -f
-          echo "-------- Cleanup Successful --------"
-        """
+        sh '''
+           set -x
+           docker image prune -a -f
+        '''
       }
     }
 
@@ -128,10 +138,10 @@ pipeline {
     stage("Trigger Deployment Job") {
       steps {
         build job: "KubernetesDeployment",
-        parameters: [
-          string(name: "App_Name", value: "datastore-deploy"),
-          string(name: "App_Version", value: "${params.App_Version}")
-        ]
+          parameters: [
+            string(name: "App_Name", value: "datastore-deploy"),
+            string(name: "App_Version", value: "${params.App_Version}")
+          ]
       }
     }
   }
