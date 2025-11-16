@@ -1,5 +1,5 @@
 FROM ubuntu
-MAINTAINER shiva
+MAINTAINER Abhii
 RUN apt-get update -y
 RUN apt-get install -y openjdk-11-jdk
 RUN mkdir -p /app/source
