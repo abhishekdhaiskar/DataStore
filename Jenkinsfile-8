@@ -2,29 +2,26 @@ pipeline {
     agent any
 
     parameters {
-        string(name: "App_Version", defaultValue: "1.0.0", description: "Provide application version")
+        string(name: "App_Version", defaultValue: "1.0.0", description: "Provide Application Version")
     }
 
     environment {
-        // Credentials binding will populate these vars in withCredentials blocks below.
-        DOCKERHUB_CREDENTIALS = credentials("dockerhub")   // username/password
-        // Note: do NOT assume these env vars exist globally; use withCredentials where needed for aws
+        DOCKERHUB = credentials("dockerhub")      // DockerHub credentials
+        AWS_CREDS = credentials("aws-creds")      // AWS credentials
     }
 
     stages {
+
         stage("Clone Repo") {
             steps {
-                // Simple, reliable git checkout
                 git branch: 'master', url: 'https://github.com/abhishekdhaiskar/DataStore.git'
-                // Print current files for debugging
-                sh 'ls -la'
+                sh "ls -la"
             }
         }
 
-        stage("Maven Build (inside Docker builder)") {
+        stage("Maven Build") {
             steps {
                 sh '''
-                    set -e
                     chmod +x mvnw || true
                     ./mvnw clean package -DskipTests
                     ls -la target
@@ -34,22 +31,21 @@ pipeline {
 
         stage("Maven Test") {
             steps {
-                sh './mvnw test || true'   // continue even if tests fail; remove "|| true" if you want to fail the build
+                sh "./mvnw test"
             }
         }
 
         stage("Artifact Store (S3)") {
-            when {
-                expression { return params.App_Version?.trim() }
-            }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                withCredentials([usernamePassword(credentialsId: 'aws-creds',
+                                                  usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                  passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+
                     sh '''
-                        # configure temporary AWS creds for CLI
                         export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
                         export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-                        aws --version
-                        aws s3 cp ./target/*.jar s3://datastore-application/ || { echo "S3 upload failed"; exit 1; }
+
+                        aws s3 cp ./target/*.jar s3://datastore-application/
                     '''
                 }
             }
@@ -57,39 +53,42 @@ pipeline {
 
         stage("Docker Build") {
             steps {
-                // use params.App_Version to avoid Groovy/shell confusion
                 sh "docker build -t datastore:${params.App_Version} -f Dockerfile ."
             }
         }
 
         stage("Docker Scan") {
             steps {
-                // trivy must be installed on agent
-                sh "trivy image datastore:${params.App_Version} || echo 'Trivy returned non-zero (vulnerabilities may exist)'"
+                sh "trivy image datastore:${params.App_Version} || true"
             }
         }
 
-        stage("Docker Tag & Push") {
+        stage("Docker Tag") {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PSW')]) {
+                sh "docker tag datastore:${params.App_Version} abhi9604/datastore:${params.App_Version}"
+            }
+        }
+
+        stage("Docker Push") {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
-                        docker tag datastore:${APP_VERSION_PLACEHOLDER} abhi9604/datastore:${APP_VERSION_PLACEHOLDER}
-                        echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push abhi9604/datastore:${APP_VERSION_PLACEHOLDER}
-                    '''.replaceAll("APP_VERSION_PLACEHOLDER", params.App_Version)
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker push abhi9604/datastore:'"${App_Version}"'
+                    '''
                 }
             }
         }
 
         stage("Cleanup") {
             steps {
-                sh "docker image prune -a -f || true"
+                sh "docker image prune -a -f"
             }
         }
 
         stage("Deployment Approval") {
             steps {
-                input message: "Trigger Downstream Job?"
+                input "Trigger Downstream Job?"
             }
         }
     }
