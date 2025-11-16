@@ -11,13 +11,19 @@ pipeline {
 
     options {
         timestamps()
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        durabilityHint('MAX_SURVIVABILITY')
     }
 
     stages {
 
+        /* =======================
+           GIT CLONE
+        ======================= */
         stage("Repo Clone") {
             steps {
-                echo "===== CLONING REPO ====="
+                echo "===== CLONING REPOSITORY ====="
                 checkout([
                     $class: 'GitSCM',
                     branches: [[name: "*/master"]],
@@ -26,91 +32,147 @@ pipeline {
             }
         }
 
+        /* =======================
+           MAVEN BUILD
+        ======================= */
         stage("Maven Build") {
             steps {
-                echo "===== MAVEN BUILD ====="
-                sh "mvn clean package -DskipTests"
+                echo "===== MAVEN BUILD STARTED ====="
+                sh """
+                    set -xe
+                    mvn clean package -DskipTests
+                    echo "BUILD COMPLETE"
+                """
             }
         }
 
+        /* =======================
+           MAVEN TEST
+        ======================= */
         stage("Maven Test") {
             steps {
-                echo "===== MAVEN TEST ====="
-                sh "mvn test"
+                echo "===== RUNNING TEST CASES ====="
+                sh """
+                    set -xe
+                    mvn test
+                    echo "TEST EXECUTION COMPLETE"
+                """
             }
         }
 
+        /* =======================
+           S3 ARTIFACT UPLOAD (FULL LOGS)
+        ======================= */
         stage("Artifact Store") {
             steps {
+                echo "===== UPLOADING ARTIFACT TO S3 ====="
+
                 withAWS(credentials: 'aws-creds', region: 'ap-south-1') {
                     sh """
                         set -x
+                        set -o pipefail
 
-                        echo "===== UPLOADING TO S3 ====="
-
-                        echo "Checking target folder..."
-                        ls -lh target || true
+                        echo "Target folder:"
+                        ls -lh target
 
                         echo "Checking bucket access..."
-                        aws s3 ls s3://datastore-application/ || true
+                        aws s3 ls s3://datastore-application/ --region ap-south-1
 
-                        echo "Uploading jar..."
+                        echo "Uploading JAR..."
                         aws s3 cp target/*.jar s3://datastore-application/ --region ap-south-1
 
-                        echo "===== S3 UPLOAD DONE ====="
+                        echo "UPLOAD FINISHED"
                     """
                 }
             }
         }
 
+        /* =======================
+           DOCKER BUILD
+        ======================= */
         stage("Docker Image Build") {
             steps {
-                sh "docker build -t datastore:${App_Version} ."
+                echo "===== BUILDING DOCKER IMAGE ====="
+                sh """
+                    set -xe
+                    docker build -t datastore:${App_Version} .
+                """
             }
         }
 
+        /* =======================
+           TRIVY SCAN
+        ======================= */
         stage("Docker Image Scan") {
             steps {
-                sh "trivy image datastore:${App_Version}"
+                echo "===== SCANNING DOCKER IMAGE ====="
+                sh """
+                    set -xe
+                    trivy image datastore:${App_Version}
+                """
             }
         }
 
+        /* =======================
+           TAG IMAGE
+        ======================= */
         stage("Docker Image Tag") {
             steps {
-                sh "docker tag datastore:${App_Version} abhi9604/datastore:${App_Version}"
+                echo "===== TAGGING IMAGE ====="
+                sh """
+                    set -xe
+                    docker tag datastore:${App_Version} abhi9604/datastore:${App_Version}
+                """
             }
         }
 
+        /* =======================
+           PUSH TO DOCKER HUB
+        ======================= */
         stage("DockerHub Push") {
             steps {
-                sh '''
+                echo "===== PUSHING IMAGE TO DOCKER HUB ====="
+                sh """
+                    set -xe
                     echo "$DOCKERHUB_CREDENTIALS_PSW" | docker login -u "$DOCKERHUB_CREDENTIALS_USR" --password-stdin
-                    docker push abhi9604/datastore:'"${App_Version}"'
-                '''
+                    docker push abhi9604/datastore:${App_Version}
+                """
             }
         }
 
+        /* =======================
+           CLEANUP
+        ======================= */
         stage("Cleanup") {
             steps {
-                sh "docker image prune -a -f"
+                echo "===== CLEANING UP DOCKER IMAGES ====="
+                sh """
+                    set -xe
+                    docker image prune -a -f
+                """
             }
         }
 
+        /* =======================
+           APPROVAL
+        ======================= */
         stage("Approval") {
             steps {
-                input "Trigger downstream job?"
+                input "Do you want to deploy?"
             }
         }
 
+        /* =======================
+           TRIGGER DEPLOYMENT JOB
+        ======================= */
         stage("Trigger Deployment") {
             steps {
-                build(
-                    job: "KubernetesDeployment",
-                    parameters: [
-                        string(name: "App_Name", value: "datastore-deploy"),
-                        string(name: "App_Version", value: params.App_Version)
-                    ]
-                )
+                echo "===== TRIGGERING KUBERNETES PIPELINE ====="
+                build job: "KubernetesDeployment",
+                parameters: [
+                    string(name: "App_Name", value: "datastore-deploy"),
+                    string(name: "App_Version", value: params.App_Version)
+                ]
             }
         }
     }
