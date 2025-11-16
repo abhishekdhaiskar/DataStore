@@ -40,28 +40,30 @@ pipeline {
       }
     }
 
-    /* ------------------------------
-       FIXED & VALID S3 ARTIFACT STAGE
-    --------------------------------*/
-stage("Artifact Store") {
-  steps {
-    withCredentials([[
-      $class: 'AmazonWebServicesCredentialsBinding',
-      credentialsId: 'aws-creds'
-    ]]) {
-      sh '''
-        echo "Uploading artifact to S3..."
+    /* ---------------------------------------------------
+         FIXED S3 STAGE (Mumbai region + full debug logs)
+       --------------------------------------------------- */
+    stage("Artifact Store") {
+      steps {
+        withCredentials([[ 
+          $class: 'AmazonWebServicesCredentialsBinding', 
+          credentialsId: 'aws-creds' 
+        ]]) {
+          sh '''
+            echo "Uploading artifact to S3..."
 
-        ls -lh target/
+            # show file
+            ls -lh target/
 
-        aws s3 cp target/*.jar s3://datastore-application/ --debug 2>&1 | tee s3-upload.log
+            # upload to Mumbai region
+            aws s3 cp target/*.jar s3://datastore-application/ --region ap-south-1 \
+              --debug 2>&1 | tee s3-upload.log
 
-        echo "S3 Upload Completed"
-      '''
+            echo "S3 Upload Completed"
+          '''
+        }
+      }
     }
-  }
-}
-
 
     stage("Docker Image Build") {
       steps {
@@ -110,9 +112,9 @@ stage("Artifact Store") {
     stage("Cleanup") {
       steps {
         sh """
-           echo "-------- Cleaning Jenkins Machine --------"
-           docker image prune -a -f
-           echo "-------- Cleanup Successful --------"
+          echo "-------- Cleaning Jenkins Machine --------"
+          docker image prune -a -f
+          echo "-------- Cleanup Successful --------"
         """
       }
     }
@@ -126,10 +128,10 @@ stage("Artifact Store") {
     stage("Trigger Deployment Job") {
       steps {
         build job: "KubernetesDeployment",
-          parameters: [
-            string(name: "App_Name", value: "datastore-deploy"),
-            string(name: "App_Version", value: "${params.App_Version}")
-          ]
+        parameters: [
+          string(name: "App_Name", value: "datastore-deploy"),
+          string(name: "App_Version", value: "${params.App_Version}")
+        ]
       }
     }
   }
