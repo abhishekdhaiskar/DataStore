@@ -23,9 +23,9 @@ pipeline {
     stage("Maven Build") {
       steps {
         sh """
-            echo "-------- Building Application --------"
-            mvn clean package -DskipTests
-            echo "------- Application Built Successfully --------"
+          echo "-------- Building Application --------"
+          mvn clean package -DskipTests
+          echo "------- Application Built Successfully --------"
         """
       }
     }
@@ -41,36 +41,32 @@ pipeline {
     }
 
     /* ------------------------------
-       FIXED S3 ARTIFACT STAGE
-       Full logs will now appear
+       FIXED & VALID S3 ARTIFACT STAGE
     --------------------------------*/
-stage("Artifact Store") {
-  steps {
-    withCredentials([
-      usernamePassword(
-        credentialsId: 'aws-creds',
-        usernameVariable: 'AWS_ACCESS_KEY_ID',
-        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-      )
-    ]) {
-      sh '''
-        echo "Uploading JAR to S3..."
+    stage("Artifact Store") {
+      steps {
+        withCredentials([
+          usernamePassword(
+            credentialsId: 'aws-creds',
+            usernameVariable: 'AWS_ACCESS_KEY_ID',
+            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+          )
+        ]) {
+          sh '''
+            echo "Uploading JAR to S3..."
 
-        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 
-        # Show the file you are uploading
-        ls -lh target/
+            ls -lh target/
 
-        # Upload JAR to S3 bucket
-        aws s3 cp target/*.jar s3://datastore-application/
+            aws s3 cp target/*.jar s3://datastore-application/
 
-        echo "Upload Complete!"
-      '''
+            echo "Upload Complete!"
+          '''
+        }
+      }
     }
-  }
-}
-
 
     stage("Docker Image Build") {
       steps {
@@ -135,10 +131,10 @@ stage("Artifact Store") {
     stage("Trigger Deployment Job") {
       steps {
         build job: "KubernetesDeployment",
-              parameters: [
-                string(name: "App_Name", value: "datastore-deploy"),
-                string(name: "App_Version", value: "${params.App_Version}")
-              ]
+          parameters: [
+            string(name: "App_Name", value: "datastore-deploy"),
+            string(name: "App_Version", value: "${params.App_Version}")
+          ]
       }
     }
   }
