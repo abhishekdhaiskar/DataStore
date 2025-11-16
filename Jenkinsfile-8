@@ -40,20 +40,39 @@ pipeline {
       }
     }
 
+    /* ------------------------------
+       FIXED S3 ARTIFACT STAGE
+       Full logs will now appear
+    --------------------------------*/
     stage("Artifact Store") {
       steps {
-        withCredentials([usernamePassword(
-          credentialsId: 'aws-creds',
-          usernameVariable: 'AWS_ACCESS_KEY_ID',
-          passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-        )]) {
+        withCredentials([
+          usernamePassword(
+            credentialsId: 'aws-creds',
+            usernameVariable: 'AWS_ACCESS_KEY_ID',
+            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+          )
+        ]) {
+
           sh """
             echo "-------- Uploading Artifacts To S3 --------"
+
+            # enable full logging
+            set -x
+
             export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
             export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 
-            aws s3 cp ./target/*.jar s3://datastore-application/
+            # verify AWS CLI
+            aws --version
 
+            # verify bucket access with full output
+            aws s3 ls s3://datastore-application/ --human-readable --summarize
+
+            # Upload with full debug log
+            aws s3 cp ./target/*.jar s3://datastore-application/ --debug
+
+            set +x
             echo "-------- S3 Upload Completed --------"
           """
         }
@@ -90,7 +109,7 @@ pipeline {
       }
     }
 
-    stage("Logging in & Pushing to DockerHub") {
+    stage("Login & Push to DockerHub") {
       steps {
         sh """
           echo "-------- Logging To DockerHub --------"
