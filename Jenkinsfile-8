@@ -1,179 +1,136 @@
 pipeline {
-    agent any
+  agent any
 
-    parameters {
-        string(name: "App_Version", description: "Provide application version")
+  parameters {
+    string(name: "App_Version", description: "provide application version")
+  }
+
+  environment {
+    DOCKERHUB_CREDENTIALS=credentials("dockerhub")
+  }
+
+  stages {
+    stage("Repo Clone") {
+      steps {
+        checkout scmGit(branches: [[name: '*/master']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/shivagande26/DataStore.git']])
+      }
     }
-
-    environment {
-        DOCKERHUB_CREDENTIALS = credentials("dockerhub")
+    stage("Maven Build") {
+      steps {
+        sh """
+            echo "-------- Building Application --------"
+            mvn clean package
+            echo "------- Application Built Successfully --------"
+        """
+      }
     }
-
-    options {
-        timestamps()
-        ansiColor('xterm')
-        buildDiscarder(logRotator(numToKeepStr: '20'))
-        durabilityHint('MAX_SURVIVABILITY')
+    stage("Maven Test") {
+      steps {
+        sh """
+          echo "-------- Executing Testcases --------"
+          mvn test
+          echo "-------- Testcases Execution Complete --------"
+        """
+      }
     }
+    stage("Artifact Store") {
+      steps {
+        sh """
+          echo "-------- Pushing Artifacts To S3 --------"
+          aws s3 cp ./target/*.jar s3://datastore-artefact-store-apps/
+          echo "-------- Pushing Artifacts To S3 Completed --------"
+        """
+      }
+    }
+    stage("Docker Image Build") {
+      steps {
+        sh """
+          echo "-------- Building Docker Image --------"
+          docker build -t datastore:"${App_Version}" .
+          echo "-------- Image Successfully Built --------"
+        """
+      }
+    }
+    stage("Docker Image Scan") {
+      steps {
+        sh """
+          echo "-------- Scanning Docker Image --------"
+          trivy image datastore:"${App_Version}"
+          echo "-------- Scanning Docker Image Complete --------"
+        """
+      }
+    }
+    stage("Docker Image Tag") {
+      steps{
+        sh """
+          echo "-------- Tagging Docker Image --------"
+          docker tag datastore:"${App_Version}" 8072388539/datastore:"${App_Version}"
+          echo "-------- Tagging Docker Image Completed."
+        """
+      }
+    }
+    stage("Loggingin & Pushing Docker image") {
+      steps {
+        sh """
+          echo "-------- Logging To DockerHub --------"
+          docker login -u $DOCKERHUB_CREDENTIALS_USR --password $DOCKERHUB_CREDENTIALS_PSW
+          echo "-------- DockerHub Login Successful --------"
 
-    stages {
-
-        /* =======================
-           GIT CLONE
-        ======================= */
-        stage("Repo Clone") {
-            steps {
-                echo "===== CLONING REPOSITORY ====="
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: "*/master"]],
-                    userRemoteConfigs: [[url: "https://github.com/abhishekdhaiskar/DataStore.git"]]
-                ])
-            }
+          echo "-------- Pushing Docker Image To DockerHub --------"
+          docker push 8072388539/datastore:"${App_Version}"
+          echo "-------- Docker Image Pushed Successfully --------"
+        """
+      }
+    }
+    stage("cleanup") {
+      steps {
+        sh """
+           echo "-------- Cleaning Up Jenkins Machine --------"
+           docker image prune -a -f
+           echo "-------- Clean Up Successful --------"
+        """
+      }
+    }
+    stage("Deployment Acceptance") {
+      steps {
+        input 'Trigger Down Stream Job'
+      }
+    }
+    stage("Triggering Deployment Job") {
+      steps {
+        build job: "KubernetesDeployment", parameters: [string(name: "App_Name", value: "datastore-deploy"), string(name: "App_Version", value: "${params.App_Version}")]
+      }
+    }
+  }
+  post {
+        success {
+            slackSend channel: '#alerting',
+                      color: 'good',
+                      message: "✔️ SUCCESS: `${env.JOB_NAME} #${env.BUILD_NUMBER}` completed successfully."
         }
 
-        /* =======================
-           MAVEN BUILD
-        ======================= */
-        stage("Maven Build") {
-            steps {
-                echo "===== MAVEN BUILD STARTED ====="
-                sh """
-                    set -xe
-                    mvn clean package -DskipTests
-                    echo "BUILD COMPLETE"
-                """
-            }
+        failure {
+            slackSend channel: '#alerting',
+                      color: 'danger',
+                      message: "❌ FAILURE: `${env.JOB_NAME} #${env.BUILD_NUMBER}` failed.\nCheck console output: ${env.BUILD_URL}"
         }
 
-        /* =======================
-           MAVEN TEST
-        ======================= */
-        stage("Maven Test") {
-            steps {
-                echo "===== RUNNING TEST CASES ====="
-                sh """
-                    set -xe
-                    mvn test
-                    echo "TEST EXECUTION COMPLETE"
-                """
-            }
+        unstable {
+            slackSend channel: '#alerting',
+                      color: 'warning',
+                      message: "⚠️ UNSTABLE: `${env.JOB_NAME} #${env.BUILD_NUMBER}` returned unstable status."
         }
 
-        /* =======================
-           S3 ARTIFACT UPLOAD (FULL LOGS)
-        ======================= */
-        stage("Artifact Store") {
-            steps {
-                echo "===== UPLOADING ARTIFACT TO S3 ====="
-
-                withAWS(credentials: 'aws-creds', region: 'ap-south-1') {
-                    sh """
-                        set -x
-                        set -o pipefail
-
-                        echo "Target folder:"
-                        ls -lh target
-
-                        echo "Checking bucket access..."
-                        aws s3 ls s3://datastore-application/ --region ap-south-1
-
-                        echo "Uploading JAR..."
-                        aws s3 cp target/*.jar s3://datastore-application/ --region ap-south-1
-
-                        echo "UPLOAD FINISHED"
-                    """
-                }
-            }
+        aborted {
+            slackSend channel: '#alerting',
+                      color: '#808080',
+                      message: "⛔ ABORTED: `${env.JOB_NAME} #${env.BUILD_NUMBER}` was aborted."
         }
 
-        /* =======================
-           DOCKER BUILD
-        ======================= */
-        stage("Docker Image Build") {
-            steps {
-                echo "===== BUILDING DOCKER IMAGE ====="
-                sh """
-                    set -xe
-                    docker build -t datastore:${App_Version} .
-                """
-            }
-        }
-
-        /* =======================
-           TRIVY SCAN
-        ======================= */
-        stage("Docker Image Scan") {
-            steps {
-                echo "===== SCANNING DOCKER IMAGE ====="
-                sh """
-                    set -xe
-                    trivy image datastore:${App_Version}
-                """
-            }
-        }
-
-        /* =======================
-           TAG IMAGE
-        ======================= */
-        stage("Docker Image Tag") {
-            steps {
-                echo "===== TAGGING IMAGE ====="
-                sh """
-                    set -xe
-                    docker tag datastore:${App_Version} abhi9604/datastore:${App_Version}
-                """
-            }
-        }
-
-        /* =======================
-           PUSH TO DOCKER HUB
-        ======================= */
-        stage("DockerHub Push") {
-            steps {
-                echo "===== PUSHING IMAGE TO DOCKER HUB ====="
-                sh """
-                    set -xe
-                    echo "$DOCKERHUB_CREDENTIALS_PSW" | docker login -u "$DOCKERHUB_CREDENTIALS_USR" --password-stdin
-                    docker push abhi9604/datastore:${App_Version}
-                """
-            }
-        }
-
-        /* =======================
-           CLEANUP
-        ======================= */
-        stage("Cleanup") {
-            steps {
-                echo "===== CLEANING UP DOCKER IMAGES ====="
-                sh """
-                    set -xe
-                    docker image prune -a -f
-                """
-            }
-        }
-
-        /* =======================
-           APPROVAL
-        ======================= */
-        stage("Approval") {
-            steps {
-                input "Do you want to deploy?"
-            }
-        }
-
-        /* =======================
-           TRIGGER DEPLOYMENT JOB
-        ======================= */
-        stage("Trigger Deployment") {
-            steps {
-                echo "===== TRIGGERING KUBERNETES PIPELINE ====="
-                build job: "KubernetesDeployment",
-                parameters: [
-                    string(name: "App_Name", value: "datastore-deploy"),
-                    string(name: "App_Version", value: params.App_Version)
-                ]
-            }
+        always {
+            slackSend channel: '#alerting',
+                      color: '#439FE0',
+                      message: "ℹ️ Build finished: `${env.JOB_NAME} #${env.BUILD_NUMBER}`"
         }
     }
 }
