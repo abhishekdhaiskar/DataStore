@@ -1,95 +1,133 @@
 pipeline {
-    agent any
+  agent any
 
-    parameters {
-        string(name: "App_Version", defaultValue: "1.0.0", description: "Provide Application Version")
+  parameters {
+    string(name: "App_Version", description: "Provide application version")
+  }
+
+  environment {
+    DOCKERHUB_CREDENTIALS = credentials("dockerhub")
+  }
+
+  stages {
+
+    stage("Repo Clone") {
+      steps {
+        checkout scmGit(
+          branches: [[name: '*/master']],
+          userRemoteConfigs: [[url: 'https://github.com/shivagande26/DataStore.git']]
+        )
+      }
     }
 
-    environment {
-        DOCKERHUB = credentials("dockerhub")      // DockerHub credentials
-        AWS_CREDS = credentials("aws-creds")      // AWS credentials
+    stage("Maven Build") {
+      steps {
+        sh """
+            echo "-------- Building Application --------"
+            mvn clean package -DskipTests
+            echo "------- Application Built Successfully --------"
+        """
+      }
     }
 
-    stages {
-
-        stage("Clone Repo") {
-            steps {
-                git branch: 'master', url: 'https://github.com/abhishekdhaiskar/DataStore.git'
-                sh "ls -la"
-            }
-        }
-
-        stage("Maven Build") {
-            steps {
-                sh '''
-                    chmod +x mvnw || true
-                    ./mvnw clean package -DskipTests
-                    ls -la target
-                '''
-            }
-        }
-
-        stage("Maven Test") {
-            steps {
-                sh "./mvnw test"
-            }
-        }
-
-        stage("Artifact Store (S3)") {
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'aws-creds',
-                                                  usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                                  passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-
-                    sh '''
-                        export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-                        export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-
-                        aws s3 cp ./target/*.jar s3://datastore-application/
-                    '''
-                }
-            }
-        }
-
-        stage("Docker Build") {
-            steps {
-                sh "docker build -t datastore:${params.App_Version} -f Dockerfile ."
-            }
-        }
-
-        stage("Docker Scan") {
-            steps {
-                sh "trivy image datastore:${params.App_Version} || true"
-            }
-        }
-
-        stage("Docker Tag") {
-            steps {
-                sh "docker tag datastore:${params.App_Version} abhi9604/datastore:${params.App_Version}"
-            }
-        }
-
-        stage("Docker Push") {
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push abhi9604/datastore:'"${App_Version}"'
-                    '''
-                }
-            }
-        }
-
-        stage("Cleanup") {
-            steps {
-                sh "docker image prune -a -f"
-            }
-        }
-
-        stage("Deployment Approval") {
-            steps {
-                input "Trigger Downstream Job?"
-            }
-        }
+    stage("Maven Test") {
+      steps {
+        sh """
+          echo "-------- Executing Testcases --------"
+          mvn test
+          echo "-------- Testcases Execution Complete --------"
+        """
+      }
     }
+
+    stage("Artifact Store") {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'aws-creds',
+          usernameVariable: 'AWS_ACCESS_KEY_ID',
+          passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+        )]) {
+          sh """
+            echo "-------- Uploading Artifacts To S3 --------"
+            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+
+            aws s3 cp ./target/*.jar s3://datastore-application/
+
+            echo "-------- S3 Upload Completed --------"
+          """
+        }
+      }
+    }
+
+    stage("Docker Image Build") {
+      steps {
+        sh """
+          echo "-------- Building Docker Image --------"
+          docker build -t datastore:${App_Version} .
+          echo "-------- Image Successfully Built --------"
+        """
+      }
+    }
+
+    stage("Docker Image Scan") {
+      steps {
+        sh """
+          echo "-------- Scanning Docker Image --------"
+          trivy image datastore:${App_Version}
+          echo "-------- Scanning Docker Image Complete --------"
+        """
+      }
+    }
+
+    stage("Docker Image Tag") {
+      steps {
+        sh """
+          echo "-------- Tagging Docker Image --------"
+          docker tag datastore:${App_Version} abhi9604/datastore:${App_Version}
+          echo "-------- Tagging Docker Image Completed --------"
+        """
+      }
+    }
+
+    stage("Logging in & Pushing to DockerHub") {
+      steps {
+        sh """
+          echo "-------- Logging To DockerHub --------"
+          echo "$DOCKERHUB_CREDENTIALS_PSW" | docker login -u "$DOCKERHUB_CREDENTIALS_USR" --password-stdin
+          echo "-------- DockerHub Login Successful --------"
+
+          echo "-------- Pushing Docker Image To DockerHub --------"
+          docker push abhi9604/datastore:${App_Version}
+          echo "-------- Docker Image Pushed Successfully --------"
+        """
+      }
+    }
+
+    stage("Cleanup") {
+      steps {
+        sh """
+           echo "-------- Cleaning Jenkins Machine --------"
+           docker image prune -a -f
+           echo "-------- Cleanup Successful --------"
+        """
+      }
+    }
+
+    stage("Deployment Acceptance") {
+      steps {
+        input 'Trigger Down Stream Job'
+      }
+    }
+
+    stage("Trigger Deployment Job") {
+      steps {
+        build job: "KubernetesDeployment",
+              parameters: [
+                string(name: "App_Name", value: "datastore-deploy"),
+                string(name: "App_Version", value: "${params.App_Version}")
+              ]
+      }
+    }
+  }
 }
